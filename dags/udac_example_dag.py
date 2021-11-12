@@ -1,87 +1,63 @@
-from datetime import datetime, timedelta
-import os
-from airflow import DAG
-from airflow.operators.dummy_operator import DummyOperator
-from airflow.operators import (StageToRedshiftOperator, LoadFactOperator,
-                                LoadDimensionOperator, DataQualityOperator)
-from helpers import SqlQueries
-AWS_KEY = os.environ.get('AWS_KEY')
-AWS_SECRET = os.environ.get('AWS_SECRET')
-##Apagar
-# default_args = {
-#     'owner': 'udacity',
-#     'start_date': datetime(2019, 1, 12),
-# }
-default_args = {
-    'owner': 'udacity',
-    'depends_on_past': False,
-    'start_date': datetime(2021, 11, 7),
-#     'email': ['marcoantonioafernandes@gmail.com'],
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 3,
-    'retry_delay': timedelta(minutes=5),
-    # 'queue': 'bash_queue',
-    # 'pool': 'backfill',
-    # 'priority_weight': 10,
-    # 'end_date': datetime(2016, 1, 1),
-    # 'wait_for_downstream': False,
-    # 'dag': dag,
-    # 'sla': timedelta(hours=2),
-    # 'execution_timeout': timedelta(seconds=300),
-    # 'on_failure_callback': some_function,
-    # 'on_success_callback': some_other_function,
-    # 'on_retry_callback': another_function,
-    # 'sla_miss_callback': yet_another_function,
-    # 'trigger_rule': 'all_success'
-}
-dag = DAG('udac_example_dag',
-          default_args=default_args,
-          description='Load and transform data in Redshift with Airflow',
-          schedule_interval='0 * * * *'
+from airflow.hooks.postgres_hook import PostgresHook
+from airflow.models import BaseOperator
+from airflow.utils.decorators import apply_defaults
+from airflow.contrib.hooks.aws_hook import AwsHook
+class StageToRedshiftOperator(BaseOperator):
+    ui_color = '#358140'
+    template_fields = ("s3_key",)
+    
+    copy_sql = """
+    COPY {} 
+    FROM '{}' 
+    ACCESS_KEY_ID '{}' 
+    SECRET_ACCESS_KEY '{}'
+    JSON 'auto ignorecase'
+    """
+   
+    @apply_defaults
+    def __init__(self,
+                 redshift_conn_id="",
+                 aws_credentials_id="",
+                 table="",
+                 s3_bucket="",
+                 s3_key="",
+                 delimiter="",
+                 ignore_headers=1,
+                 *args, **kwargs):
+        super(StageToRedshiftOperator, self).__init__(*args, **kwargs)
+        self.table = table
+        self.redshift_conn_id = redshift_conn_id
+        self.aws_credentials_id=aws_credentials_id
+        self.table=table
+        self.s3_bucket=s3_bucket
+        self.s3_key=s3_key
+        self.delimiter=delimiter
+        self.ignore_headers=ignore_headers
+        
+        
+    def execute(self, context):
+        aws_hook = AwsHook(self.aws_credentials_id)
+        credentials = aws_hook.get_credentials()
+        redshift = PostgresHook(postgres_conn_id=self.redshift_conn_id)
+        
+        self.log.info("Clearing data from destination Redshift Table")
+        redshift.run("DELETE FROM {}".format(self.table))
+        
+        self.log.info("Copying data from S3 to redshift")
+        rendered_key = self.s3_key.format(**context)
+        self.log.info("rendered key {}".format(rendered_key))
+        s3_path = "s3://{}/{}".format(self.s3_bucket, rendered_key)
+#         s3_path = 's3://udacity-dend/log-data'
+        
+        formatted_sql = StageToRedshiftOperator.copy_sql.format(
+            self.table,
+            s3_path, 
+            credentials.access_key,
+            credentials.secret_key
         )
-start_operator = DummyOperator(task_id='Begin_execution',  dag=dag)
-stage_events_to_redshift = StageToRedshiftOperator(
-    task_id='Stage_events',
-    dag=dag,
-    table="public.staging_events",
-    redshift_conn_id="redshift",
-    aws_credentials_id="aws_credentials",
-    s3_bucket="udacity-dend",
-    s3_key="log-data"
-)
-stage_songs_to_redshift = StageToRedshiftOperator(
-    task_id='Stage_songs',
-    dag=dag,
-    table="public.staging_songs",
-    redshift_conn_id="redshift",
-    aws_credentials_id="aws_credentials",
-    s3_bucket="udacity-dend",
-    s3_key="song-data"
-)
-# load_songplays_table = LoadFactOperator(
-#     task_id='Load_songplays_fact_table',
-#     dag=dag
-# )
-# load_user_dimension_table = LoadDimensionOperator(
-#     task_id='Load_user_dim_table',
-#     dag=dag
-# )
-# load_song_dimension_table = LoadDimensionOperator(
-#     task_id='Load_song_dim_table',
-#     dag=dag
-# )
-# load_artist_dimension_table = LoadDimensionOperator(
-#     task_id='Load_artist_dim_table',
-#     dag=dag
-# )
-# load_time_dimension_table = LoadDimensionOperator(
-#     task_id='Load_time_dim_table',
-#     dag=dag
-# )
-# run_quality_checks = DataQualityOperator(
-#     task_id='Run_data_quality_checks',
-#     dag=dag
-# )
-# end_operator = DummyOperator(task_id='Stop_execution',  dag=dag)
-stage_events_to_redshift >> stage_songs_to_redshift
+        
+        redshift.run(formatted_sql)
+        
+        
+        
+    
