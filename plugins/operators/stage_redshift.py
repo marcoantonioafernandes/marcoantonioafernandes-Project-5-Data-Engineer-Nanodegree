@@ -5,14 +5,15 @@ from airflow.contrib.hooks.aws_hook import AwsHook
 class StageToRedshiftOperator(BaseOperator):
     ui_color = '#358140'
     template_fields = ("s3_key",)
-    copy_sql = """
-        COPY {}
-        FROM '{}'
-        ACCESS_KEY_ID '{}'
-        SECRET_ACCESS_KEY '{}'
-        DELIMITER '{}'
-    """
     
+    copy_sql = """
+    COPY {} 
+    FROM '{}' 
+    ACCESS_KEY_ID '{}' 
+    SECRET_ACCESS_KEY '{}'
+    JSON 'auto ignorecase'
+    """
+   
     @apply_defaults
     def __init__(self,
                  redshift_conn_id="",
@@ -32,6 +33,8 @@ class StageToRedshiftOperator(BaseOperator):
         self.s3_key=s3_key
         self.delimiter=delimiter
         self.ignore_headers=ignore_headers
+        
+        
     def execute(self, context):
         aws_hook = AwsHook(self.aws_credentials_id)
         credentials = aws_hook.get_credentials()
@@ -44,17 +47,16 @@ class StageToRedshiftOperator(BaseOperator):
         rendered_key = self.s3_key.format(**context)
         self.log.info("rendered key {}".format(rendered_key))
         s3_path = "s3://{}/{}".format(self.s3_bucket, rendered_key)
+#         s3_path = 's3://udacity-dend/log-data'
         
         formatted_sql = StageToRedshiftOperator.copy_sql.format(
             self.table,
             s3_path, 
             credentials.access_key,
-            credentials.secret_key,
-            self.ignore_headers,
-            self.delimiter
+            credentials.secret_key
         )
         
-        redshift.run(formatted_sql )
+        redshift.run(formatted_sql)
         
         
         
