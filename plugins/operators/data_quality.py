@@ -17,7 +17,7 @@ class DataQualityOperator(BaseOperator):
         self.checks = checks
 
     def execute(self, context):
-        if len(self.cheks) <= 0:
+        if len(self.checks) <= 0:
             self.log.info("No checks")
             return
         
